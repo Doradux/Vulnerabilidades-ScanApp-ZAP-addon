@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.spec
+dist/
+build/
+*.log
+zap_answer/
+zap_answer_split/
+final_json/
+dashboard.html
+.env
+.idea/
+.vscode/
+venv/
