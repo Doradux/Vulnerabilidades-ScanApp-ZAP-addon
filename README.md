@@ -31,7 +31,7 @@ Este proyecto actúa como una capa de orquestación y análisis (Wrapper) sobre 
 1.  **Clonar el repositorio:**
 
     ```powershell
-    git clone <URL_DEL_REPO>
+    git clone https://github.com/Doradux/Vulnerabilidades-ScanApp-ZAP-addon.git
     cd ScanApp
     ```
 
