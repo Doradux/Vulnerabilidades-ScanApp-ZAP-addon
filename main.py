@@ -3,6 +3,7 @@ import threading
 import time
 from zapv2 import ZAPv2
 import os
+import glob
 import json
 import tkinter.messagebox
 from datetime import datetime
@@ -15,6 +16,15 @@ import shutil
 import subprocess
 import time
 from tkinter import filedialog # Import filedialog for file picker
+
+
+# --- PATH FIX: Ensure we run relative to the script location ---
+try:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(base_dir)
+    print(f"📂 Directorio de trabajo establecido en: {base_dir}")
+except Exception as e:
+    print(f"⚠️ No se pudo cambiar el directorio de trabajo: {e}")
 
 # Constants
 ZAP_API_KEY = "12345"
@@ -192,6 +202,48 @@ class VulnerabilityScannerApp(ctk.CTk):
         self.log("🔍 Verificando servicio ZAP...")
         global ZAP_PROXY_PORT
         
+        if not shutil.which("java"):
+            self.log("⚠️ Java no detectado en PATH global. Buscando dinámicamente instalacion de Java...")
+            found_java = False
+            
+            # Buscar en ubicaciones estándar
+            search_bases = [
+                r"C:\Program Files\Java",
+                r"C:\Program Files (x86)\Java"
+            ]
+            
+            potential_paths = []
+            for base in search_bases:
+                if os.path.exists(base):
+                    # Buscar carpetas que empiecen por jdk o jre
+                    potential_paths.extend(glob.glob(os.path.join(base, "jdk*")))
+                    potential_paths.extend(glob.glob(os.path.join(base, "jre*")))
+            
+            # Ordenar para intentar usar la versión más reciente
+            potential_paths.sort(reverse=True)
+            
+            # Añadir ruta Oracle común por si acaso
+            potential_paths.append(r"C:\Program Files\Common Files\Oracle\Java\javapath")
+
+            for p in potential_paths:
+                # Si es carpeta jdk/jre, buscar bin. 
+                bin_path = os.path.join(p, "bin") if "Java" in p and ("jdk" in os.path.basename(p) or "jre" in os.path.basename(p)) else p
+                
+                if os.path.exists(os.path.join(bin_path, "java.exe")):
+                    self.log(f"✅ Java encontrado en: {bin_path}")
+                    os.environ["PATH"] += os.pathsep + bin_path
+                    found_java = True
+                    break
+            
+            if not found_java:
+                self.log("❌ ERROR CRÍTICO: No se encontró ninguna instalación de Java.")
+
+        # 0. Check for Java (Again)
+        if not shutil.which("java"):
+            self.log("❌ ERROR CRÍTICO: Java no detectado en el sistema.")
+            self.log("ℹ️ ZAP requiere Java para ejecutarse. Por favor instale Java o agréguelo al PATH.")
+            return
+
         # 1. Attempt to find a working ZAP or a free port
         # We check 8080, then 8090, 8091...
         ports_to_try = [8080, 8090, 8091, 8092, 8093, 8094, 8095]
@@ -205,7 +257,11 @@ class VulnerabilityScannerApp(ctk.CTk):
                 if res.status_code == 200 and "version" in res.text:
                     self.log(f"✅ ZAP encontrado en puerto {port} (v{res.json().get('version', '?')}).")
                     ZAP_PROXY_PORT = port # Update global
-                    self.zap = ZAPv2(apikey=ZAP_API_KEY, proxies={'http': f'http://{ZAP_PROXY_IP}:{port}', 'https': f'http://{ZAP_PROXY_IP}:{port}'})
+                    
+                    self.zap = ZAPv2(
+                        apikey=None,
+                        proxies={'http': f'http://{ZAP_PROXY_IP}:{port}', 'https': f'http://{ZAP_PROXY_IP}:{port}'}
+                    )
                     
                     # Enable Shutdown Button
                     self.shutdown_button.configure(state="normal")
@@ -240,27 +296,54 @@ class VulnerabilityScannerApp(ctk.CTk):
             try:
                 # IMPORTANT: Run ZAP from its own directory so it finds the .jar
                 zap_dir = os.path.dirname(path_found)
-                subprocess.Popen([path_found, "-daemon", "-port", str(ZAP_PROXY_PORT), "-config", f"api.key={ZAP_API_KEY}"], 
-                                 cwd=zap_dir,
-                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                
+                # LAUNCH COMMAND with permissions
+                cmd = [
+                    path_found, 
+                    "-daemon", 
+                    "-port", str(ZAP_PROXY_PORT), 
+                    "-host", "127.0.0.1",
+                    "-config", "api.disablekey=true",
+                    "-config", "api.addrs.addr.name=.*",
+                    "-config", "api.addrs.addr.regex=true"
+                ]
+                
+                subprocess.Popen(cmd, cwd=zap_dir, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
                 # Wait for ZAP to initialize
                 self.log("⏳ Esperando a que ZAP inicie (esto puede tardar 20-40s)...")
                 
-                for i in range(45):
+                for i in range(60):
                     time.sleep(1)
                     if i % 5 == 0: self.log(f"   ... esperando ({i}s)")
+                    
+                    is_ready = False
                     try:
-                        requests.get(f"http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}", timeout=1)
-                        self.log(f"✅ ZAP iniciado correctamente en puerto {ZAP_PROXY_PORT}!")
-                        self.zap = ZAPv2(apikey=ZAP_API_KEY, proxies={'http': f'http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}', 'https': f'http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}'})
-                        
-                        # Enable Shutdown Button
-                        self.shutdown_button.configure(state="normal")
-                        return
+                        r = requests.get(f"http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}", timeout=2)
+                        if r.status_code == 200:
+                            is_ready = True
                     except: pass
+
+                    if is_ready:
+                        self.log(f"✅ ZAP iniciado y respondiendo en el puerto {ZAP_PROXY_PORT}!")
+                        
+                        # Initialize Client
+                        self.zap = ZAPv2(
+                            apikey=None, 
+                            proxies={'http': f'http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}', 'https': f'http://{ZAP_PROXY_IP}:{ZAP_PROXY_PORT}'}
+                        )
+                        
+                        # Enable Shutdown Button (Thread Safe)
+                        self.after(0, lambda: self.shutdown_button.configure(state="normal"))
+                        
+                        self.log("⏳ Esperando 5s estricto para base de datos...")
+                        time.sleep(5) 
+                        return
                 
-                self.log("❌ Timeout esperando a ZAP. Verifique si inició correctamente.")
+                self.log("❌ Timeout esperando a ZAP. Posibles causas:")
+                self.log("   - Java no está instalado o configurado.")
+                self.log("   - El puerto esta bloqueado.")
+                self.log("   - ZAP tardó demasiado (intente de nuevo).")
             except Exception as e:
                 self.log(f"❌ Error lanzando ZAP: {e}")
         else:

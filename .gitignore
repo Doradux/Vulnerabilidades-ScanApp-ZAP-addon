@@ -11,4 +11,5 @@ dashboard.html
 .env
 .idea/
 .vscode/
+zap_installer.exe
 venv/
