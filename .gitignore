@@ -12,4 +12,5 @@ dashboard.html
 .idea/
 .vscode/
 zap_installer.exe
+scans_history.db
 venv/

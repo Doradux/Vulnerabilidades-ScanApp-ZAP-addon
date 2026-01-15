@@ -812,7 +812,8 @@ class VulnerabilityScannerApp(ctk.CTk):
                 self.zap.ajaxSpider.scan(target)
                 
                 start_ajax = time.time()
-                while self.zap.ajaxSpider.status == 'running':
+                ajax_status = 'running'
+                while ajax_status == 'running':
                     if self.stop_requested: 
                         self.zap.ajaxSpider.stop()
                         return False
@@ -825,6 +826,16 @@ class VulnerabilityScannerApp(ctk.CTk):
                     if elapsed > 300: # Timeout
                         self.zap.ajaxSpider.stop()
                         break
+                    
+                    # Robust status check
+                    try:
+                        ajax_status = self.zap.ajaxSpider.status
+                    except Exception as e:
+                        # Ignore connection errors during heavy load
+                        self.log(f"⚠️ ZAP lento respondiendo (AJAX)... esperando.")
+                        time.sleep(2)
+                        continue
+                        
                     time.sleep(1)
                 
                 self.update_scan_progress(0.5)
